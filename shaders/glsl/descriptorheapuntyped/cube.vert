@@ -16,7 +16,7 @@ layout (location = 2) in vec2 inUV;
 layout (location = 3) in vec3 inColor;
 
 // Per-Model data via heaps
-layout(descriptor_heap) buffer ModelData {
+layout(descriptor_heap) uniform ModelData {
 	vec4 pos;
 	vec4 color;
 } modelData[];

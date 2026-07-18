@@ -36,5 +36,5 @@ layout (push_constant) uniform PushConstants
 void main() 
 {
 	MatrixReference uniformData = pushConstants.matrixReference;
-	outFragColor = texture(sampler2D(textureImage[uniformData.imageHeapIndexOffset + inInstanceIndex], textureSampler[uniformData.samplerIndex]), inUV) * vec4(inColor, 1.0);
+	outFragColor = texture(sampler2D(textureImage[uniformData.imageHeapIndexOffset + inInstanceIndex], textureSampler[uniformData.samplerIndex]), inUV) * vec4(inColor, 1.0) ;
 }

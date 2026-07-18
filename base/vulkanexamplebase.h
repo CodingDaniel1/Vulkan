@@ -151,6 +151,7 @@ protected:
 	uint32_t currentBuffer{ 0 };
 	std::array<VkSemaphore, maxConcurrentFrames> presentCompleteSemaphores{};
 	std::vector<VkSemaphore> renderCompleteSemaphores{};
+	std::array<VkSemaphore, maxConcurrentFrames> wait_semaphores;
 	std::array<VkFence, maxConcurrentFrames> waitFences;
 
 	bool requiresStencil{ false };

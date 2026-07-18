@@ -18,6 +18,8 @@ class VulkanExample : public VulkanExampleBase
 public:
 	std::array<vks::Texture2D, 2> textures{};
 
+	vks::Texture2D test_heavy;
+
 	struct UniformData {
 		glm::mat4 mvp{ glm::mat4(1.0f) };
 		uint32_t samplerIndex{ 0 };
@@ -40,6 +42,8 @@ public:
 	vkglTF::Model model;
 
 	VkPipeline pipeline{ nullptr };
+
+	VkPipeline heavy_pipeline{ nullptr };
 	
 	VkPhysicalDeviceVulkan12Features enabledDeviceVulkan12Features{};
 	VkPhysicalDeviceDescriptorHeapFeaturesEXT enabledDeviceDescriptorHeapFeaturesEXT{};
@@ -135,6 +139,8 @@ public:
 			vkDestroyBuffer(device, descriptorHeapResources.buffer, nullptr);
 			vkDestroyBuffer(device, descriptorHeapSamplers.buffer, nullptr);
 			vkDestroyPipeline(device, pipeline, nullptr);
+			vkDestroyPipeline(device, heavy_pipeline, nullptr);
+			test_heavy.destroy();
 			for (auto& texture : textures) {
 				texture.destroy();
 			}
@@ -223,11 +229,11 @@ public:
 
 		bufferDescriptorSize = vks::tools::alignedVkSize(descriptorHeapProperties.bufferDescriptorSize, descriptorHeapProperties.bufferDescriptorAlignment);
 		// Images are storted after the last buffer (aligned)
-		imageHeapOffset = vks::tools::alignedVkSize(2 * bufferDescriptorSize, descriptorHeapProperties.imageDescriptorAlignment);
+		imageHeapOffset = vks::tools::alignedVkSize(256 * bufferDescriptorSize, descriptorHeapProperties.imageDescriptorAlignment);
 		imageDescriptorSize = vks::tools::alignedVkSize(descriptorHeapProperties.imageDescriptorSize, descriptorHeapProperties.imageDescriptorAlignment);
 
 		// Size calculations for the heap also need to accomodate for the reserved range, used by the driver for internal bookkeeping
-		const VkDeviceSize heapSizeResources = vks::tools::alignedVkSize(imageHeapOffset + imageDescriptorSize * 2 + descriptorHeapProperties.minResourceHeapReservedRange, descriptorHeapProperties.resourceHeapAlignment);
+		const VkDeviceSize heapSizeResources = vks::tools::alignedVkSize(imageHeapOffset + imageDescriptorSize * 256 + descriptorHeapProperties.minResourceHeapReservedRange, descriptorHeapProperties.resourceHeapAlignment);
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -243,7 +249,7 @@ public:
 		std::array<VkDeviceAddressRangeEXT, 2> deviceAddressRangesModelData{};
 
 		for (auto i = 0; i < 2; i++) {
-			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &modelDataBuffers[i], sizeof(ModelData)));
+			VK_CHECK_RESULT(vulkanDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &modelDataBuffers[i], sizeof(ModelData)));
 			VK_CHECK_RESULT(modelDataBuffers[i].map());
 			getBufferDeviceAddress(modelDataBuffers[i]);
 			const glm::vec4 positions[2] = { glm::vec4(-1.5f, 0.0f, 0.0f, 0.0f), glm::vec4(1.5f, 0.0f, 0.0f, 0.0f) };
@@ -254,7 +260,7 @@ public:
 			deviceAddressRangesModelData[i] = {.address = modelDataBuffers[i].deviceAddress, .size = modelDataBuffers[i].size};
 			resourceDescriptorInfos.push_back({
 				.sType = VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT,
-				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
 				.data = {
 					.pAddressRange = &deviceAddressRangesModelData[i],
 				}
@@ -266,8 +272,8 @@ public:
 		}
 
 		// Images
-		std::array<VkImageViewCreateInfo, 2> imageViewCreateInfos{};
-		std::array<VkImageDescriptorInfoEXT, 2> imageDescriptorInfo{};
+		std::array<VkImageViewCreateInfo, 3> imageViewCreateInfos{};
+		std::array<VkImageDescriptorInfoEXT, 3> imageDescriptorInfo{};
 
 		for (auto i = 0; i < 2; i++) {
 			imageViewCreateInfos[i] = {
@@ -275,7 +281,7 @@ public:
 				.image = textures[i].image,
 				.viewType = VK_IMAGE_VIEW_TYPE_2D,
 				.format = textures[i].format,
-				.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = textures[i].mipLevels, .baseArrayLayer = 0, .layerCount = 1},
+				.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = VK_REMAINING_MIP_LEVELS, .baseArrayLayer = 0, .layerCount = 1},
 			};
 
 			imageDescriptorInfo[i] = {
@@ -297,6 +303,34 @@ public:
 				.size = imageDescriptorSize
 			});
 		}
+
+		imageViewCreateInfos[2] = {
+				.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+				.image = test_heavy.image,
+				.viewType = VK_IMAGE_VIEW_TYPE_2D,
+				.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+				.subresourceRange = {.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT, .baseMipLevel = 0, .levelCount = VK_REMAINING_MIP_LEVELS, .baseArrayLayer = 0, .layerCount = 1},
+		};
+
+		imageDescriptorInfo[2] = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_DESCRIPTOR_INFO_EXT,
+			.pView = &imageViewCreateInfos[2],
+			.layout = VK_IMAGE_LAYOUT_GENERAL,
+		};
+
+		resourceDescriptorInfos.push_back({
+			.sType = VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT,
+			.type = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
+			.data = {
+				.pImage = &imageDescriptorInfo[2]
+			}
+			});
+
+		hostAddressRangesResources.push_back({
+			.address = static_cast<uint8_t*>(descriptorHeapResources.mapped) + imageHeapOffset + imageDescriptorSize * 2,
+			.size = imageDescriptorSize
+			});
+
 		// With untyped pointers we need to manually offset into the resource heap as images are stored after the buffers
 		// We calulcate this and pass it to the fragment shader to be used as an offset there
 		uniformData.imageHeapIndexOffset = static_cast<uint32_t>(imageHeapOffset / imageDescriptorSize);
@@ -352,10 +386,56 @@ public:
 		pipelineCI.pNext = &pipelineCreateFlags2CI;
 
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipeline));
+
+		VkComputePipelineCreateInfo heavy_ci{
+			.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+			.stage = loadShader(getShadersPath() + "descriptorheapuntyped/heavy.comp.spv", VK_SHADER_STAGE_COMPUTE_BIT),
+		}; 
+		
+		VkPipelineCreateFlags2CreateInfo heavyCreateFlags2CI{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_CREATE_FLAGS_2_CREATE_INFO,
+			.flags = VK_PIPELINE_CREATE_2_DESCRIPTOR_HEAP_BIT_EXT
+		};
+		heavy_ci.pNext = &heavyCreateFlags2CI;
+
+		VK_CHECK_RESULT(vkCreateComputePipelines(device, pipelineCache, 1, &heavy_ci, nullptr, &heavy_pipeline));
 	}
 
 	void loadAssets()
 	{
+		VkImageCreateInfo ci = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = VK_FORMAT_R16G16B16A16_SFLOAT,
+			.extent = VkExtent3D {.width = 2048, .height = 1024, .depth = 1 },
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = VK_IMAGE_USAGE_STORAGE_BIT,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+		};
+		VK_CHECK_RESULT(vkCreateImage(device, &ci, nullptr, &test_heavy.image));
+
+		VkMemoryAllocateInfo memAllocInfo = vks::initializers::memoryAllocateInfo();
+		VkMemoryRequirements memReqs;
+		vkGetImageMemoryRequirements(device, test_heavy.image, &memReqs);
+		memAllocInfo.allocationSize = memReqs.size;
+		memAllocInfo.memoryTypeIndex = vulkanDevice->getMemoryType(memReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+		VK_CHECK_RESULT(vkAllocateMemory(device, &memAllocInfo, nullptr, &test_heavy.deviceMemory));
+		VK_CHECK_RESULT(vkBindImageMemory(device, test_heavy.image, test_heavy.deviceMemory, 0));
+
+		// Create image view
+		VkImageViewCreateInfo view = vks::initializers::imageViewCreateInfo();
+		view.image = VK_NULL_HANDLE;
+		view.viewType = VK_IMAGE_VIEW_TYPE_2D;
+		view.format = VK_FORMAT_R16G16B16A16_SFLOAT;
+		view.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		view.image = test_heavy.image;
+		VK_CHECK_RESULT(vkCreateImageView(device, &view, nullptr, &test_heavy.view));
+		test_heavy.device = vulkanDevice;
+
 		const uint32_t glTFLoadingFlags = vkglTF::FileLoadingFlags::PreTransformVertices | vkglTF::FileLoadingFlags::PreMultiplyVertexColors | vkglTF::FileLoadingFlags::FlipY;
 		model.loadFromFile(getAssetPath() + "models/cube.gltf", vulkanDevice, queue, glTFLoadingFlags);
 		textures[0].loadFromFile(getAssetPath() + "textures/crate01_color_height_rgba.ktx", VK_FORMAT_R8G8B8A8_UNORM, vulkanDevice, queue);
@@ -393,15 +473,31 @@ public:
 
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
 
+		std::vector<VkHostAddressRangeEXT> hostAddressRangesResources{};
+		std::vector<VkResourceDescriptorInfoEXT> resourceDescriptorInfos{};
+
+		// Buffer data
+		std::array<VkDeviceAddressRangeEXT, 2> deviceAddressRangesModelData{};
+
+		for (auto i = 0; i < 2; i++) {
+
+			deviceAddressRangesModelData[i] = { .address = modelDataBuffers[i].deviceAddress, .size = modelDataBuffers[i].size };
+			resourceDescriptorInfos.push_back({
+				.sType = VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT,
+				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.data = {
+					.pAddressRange = &deviceAddressRangesModelData[i],
+				}
+				});
+			hostAddressRangesResources.push_back({
+				.address = static_cast<uint8_t*>(descriptorHeapResources.mapped) + bufferDescriptorSize * i,
+				.size = bufferDescriptorSize
+				});
+		}
+
 		VK_CHECK_RESULT(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
 
-		beginDynamicRendering(cmdBuffer);
-
-		vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-		VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
-		vkCmdSetViewport(cmdBuffer, 0, 1, &viewport);
-		VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
-		vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
+		//VK_CHECK_RESULT(vkWriteResourceDescriptorsEXT(device, static_cast<uint32_t>(resourceDescriptorInfos.size()), resourceDescriptorInfos.data(), hostAddressRangesResources.data()));
 
 		// Bind the heap containing resources (buffers and images)
 		VkBindHeapInfoEXT bindHeapInfoRes{
@@ -415,7 +511,7 @@ public:
 			.reservedRangeSize = descriptorHeapProperties.minResourceHeapReservedRange,
 		};
 		vkCmdBindResourceHeapEXT(cmdBuffer, &bindHeapInfoRes);
-		
+
 		// Bind the heap containing samplers
 		VkBindHeapInfoEXT bindHeapInfoSamplers{
 			.sType = VK_STRUCTURE_TYPE_BIND_HEAP_INFO_EXT,
@@ -428,6 +524,34 @@ public:
 			.reservedRangeSize = descriptorHeapProperties.minSamplerHeapReservedRange
 		};
 		vkCmdBindSamplerHeapEXT(cmdBuffer, &bindHeapInfoSamplers);
+
+		vks::tools::insertImageMemoryBarrier(
+			cmdBuffer,
+			test_heavy.image,
+			0,
+			VK_ACCESS_SHADER_WRITE_BIT,
+			VK_IMAGE_LAYOUT_UNDEFINED,
+			VK_IMAGE_LAYOUT_GENERAL,
+			VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+			VkImageSubresourceRange{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+		vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, heavy_pipeline);
+		uint32_t test_heavy_image_index = uniformData.imageHeapIndexOffset + 2;
+		VkPushDataInfoEXT heavy_push_data_info{
+			.sType = VK_STRUCTURE_TYPE_PUSH_DATA_INFO_EXT,
+			.data = {.address = &test_heavy_image_index, .size = sizeof(uint32_t) }
+		};
+		vkCmdPushDataEXT(cmdBuffer, &heavy_push_data_info);
+		vkCmdDispatch(cmdBuffer, 2048 / 8, 1024 / 8, 1);
+
+
+		beginDynamicRendering(cmdBuffer);
+
+		VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
+		vkCmdSetViewport(cmdBuffer, 0, 1, &viewport);
+		VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
+		vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
+		vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
 		PushConstantBlock references{};
 		// Pass pointer to the global matrix via a buffer device address

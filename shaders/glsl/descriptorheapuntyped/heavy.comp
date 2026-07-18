@@ -1,0 +1,62 @@
+#version 460
+#extension GL_EXT_nonuniform_qualifier : require
+#extension GL_EXT_descriptor_heap : require
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// --- Descriptor heap: routed directly to the resource heap, no set/binding ---
+layout(descriptor_heap, rgba32f) uniform image2D heapImages[];
+
+// The "Handle" for output is passed in as an index into the heap
+layout(push_constant) uniform PushConstants {
+    uint outputImageIndex;
+} pc;
+
+// --- Minimal PCG32 RNG (stand-in for the `random` module) ---
+struct Rng {
+    uint state;
+};
+
+uint rng_next_u32(inout Rng rng) {
+    uint oldstate = rng.state;
+    rng.state = oldstate * 747796405u + 2891336453u;
+    uint word = ((oldstate >> ((oldstate >> 28u) + 4u)) ^ oldstate) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+float rng_random_f32(inout Rng rng) {
+    return float(rng_next_u32(rng)) * (1.0 / 4294967296.0);
+}
+
+Rng rng_init(uint seed) {
+    Rng rng;
+    rng.state = seed + 2891336453u;
+    rng_next_u32(rng);
+    return rng;
+}
+
+void main() {
+    uvec2 global_id = gl_GlobalInvocationID.xy;
+
+    uvec2 vis_value = uvec2(0u, 0u);
+    uint b = 0u;
+    // if (vis_value.y != 0u)
+    {
+        const uint a = 100000u;
+        for (uint i = 0u; i < a; i++) {
+            b += i * 10u;
+        }
+    }
+
+    Rng rng = rng_init(vis_value.y + b);
+
+    vec4 color = vec4(
+        rng_random_f32(rng),
+        rng_random_f32(rng),
+        rng_random_f32(rng),
+        1.0
+    );
+
+    // No nonuniformEXT() needed — heap access is non-uniform by default
+    imageStore(heapImages[pc.outputImageIndex], ivec2(global_id), color);
+}
