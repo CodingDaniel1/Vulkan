@@ -223,11 +223,11 @@ public:
 
 		bufferDescriptorSize = vks::tools::alignedVkSize(descriptorHeapProperties.bufferDescriptorSize, descriptorHeapProperties.bufferDescriptorAlignment);
 		// Images are storted after the last buffer (aligned)
-		imageHeapOffset = vks::tools::alignedVkSize(2 * bufferDescriptorSize, descriptorHeapProperties.imageDescriptorAlignment);
+		imageHeapOffset = vks::tools::alignedVkSize(256 * bufferDescriptorSize, descriptorHeapProperties.imageDescriptorAlignment);
 		imageDescriptorSize = vks::tools::alignedVkSize(descriptorHeapProperties.imageDescriptorSize, descriptorHeapProperties.imageDescriptorAlignment);
 
 		// Size calculations for the heap also need to accomodate for the reserved range, used by the driver for internal bookkeeping
-		const VkDeviceSize heapSizeResources = vks::tools::alignedVkSize(imageHeapOffset + imageDescriptorSize * 2 + descriptorHeapProperties.minResourceHeapReservedRange, descriptorHeapProperties.resourceHeapAlignment);
+		const VkDeviceSize heapSizeResources = vks::tools::alignedVkSize(imageHeapOffset + imageDescriptorSize * 256 + descriptorHeapProperties.minResourceHeapReservedRange, descriptorHeapProperties.resourceHeapAlignment);
 		VK_CHECK_RESULT(vulkanDevice->createBuffer(
 			VK_BUFFER_USAGE_DESCRIPTOR_HEAP_BIT_EXT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT,
 			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -392,8 +392,31 @@ public:
 		VkCommandBuffer cmdBuffer = drawCmdBuffers[currentBuffer];
 
 		VkCommandBufferBeginInfo cmdBufInfo = vks::initializers::commandBufferBeginInfo();
+		std::vector<VkHostAddressRangeEXT> hostAddressRangesResources{};
+		std::vector<VkResourceDescriptorInfoEXT> resourceDescriptorInfos{};
+
+		// Buffer data
+		std::array<VkDeviceAddressRangeEXT, 2> deviceAddressRangesModelData{};
+
+		for (auto i = 0; i < 2; i++) {
+
+			deviceAddressRangesModelData[i] = { .address = modelDataBuffers[i].deviceAddress, .size = modelDataBuffers[i].size };
+			resourceDescriptorInfos.push_back({
+				.sType = VK_STRUCTURE_TYPE_RESOURCE_DESCRIPTOR_INFO_EXT,
+				.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER,
+				.data = {
+					.pAddressRange = &deviceAddressRangesModelData[i],
+				}
+				});
+			hostAddressRangesResources.push_back({
+				.address = static_cast<uint8_t*>(descriptorHeapResources.mapped) + bufferDescriptorSize * i,
+				.size = bufferDescriptorSize
+				});
+		}
 
 		VK_CHECK_RESULT(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
+
+		VK_CHECK_RESULT(vkWriteResourceDescriptorsEXT(device, static_cast<uint32_t>(resourceDescriptorInfos.size()), resourceDescriptorInfos.data(), hostAddressRangesResources.data()));
 
 		beginDynamicRendering(cmdBuffer);
 
